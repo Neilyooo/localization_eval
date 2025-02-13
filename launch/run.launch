@@ -1,0 +1,7 @@
+<launch>
+  <node pkg="monitor_log" type="monitor_log" name="monitor_log" output="screen"/>
+
+  <node pkg="rosbag" type="record" name="record" output="screen" args="-j --split --size=30 
+  /odom /final_position /map_node/odometry /mag_nail /hg_gnss_coords /fastlio/odometry /pillar_localization/odometry
+  /imu_plc" />
+</launch>
