@@ -1,0 +1,2 @@
+# localization_eval
+订阅真值与定位输出并设置一些故障用例进行记录同时保存成bag以及log形式
