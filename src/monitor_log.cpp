@@ -53,27 +53,22 @@ private:
 
 // **********************************************************
 // DataRecorder：负责订阅、缓存并在故障触发时录制 rosbag
+// 0224 新增 不进行订阅，只进行录制数据和缓存，逻辑解耦
 // **********************************************************
 class DataRecorder {
 public:
   DataRecorder(ros::NodeHandle &nh) : nh_(nh) {
     // 订阅各个需要录制的话题
-    odom_sub_ = nh_.subscribe("fastlio/odometry", 100, &DataRecorder::odomCallback, this);
-    mag_sub_  = nh_.subscribe("mag_nail", 100, &DataRecorder::magCallback, this);
+    // odom_sub_ = nh_.subscribe("fastlio/odometry", 100, &DataRecorder::odomCallback, this);
+    // mag_sub_  = nh_.subscribe("mag_nail", 100, &DataRecorder::magCallback, this);
+    // gnss_sub_ = nh_.subscribe("gnss_coords", 100, &DataRecorder::gnsscoordsCallback, this);
     // first_lidar_sub_ = nh_.subscribe("veloydne_first/points_raw", 100, &DataRecorder::first_lidarCallback, this);
     // second_lidar_sub_ = nh_.subscribe("veloydne_first/points_raw", 100, &DataRecorder::second_lidarCallback, this);
-    imu_sub_ = nh_.subscribe("imu_plc", 100, &DataRecorder::imuCallback, this);
+    // imu_sub_ = nh_.subscribe("imu_plc", 100, &DataRecorder::imuCallback, this);
 
     // recording_thread_ = std::thread(&DataRecorder::recordingLoop, this);
   }
   ~DataRecorder() {
-    // {
-    //   std::lock_guard<std::mutex> lock(cv_mutex_);
-    //   exit_flag_ = true;
-    // }
-    // cv_.notify_one();
-    // if(recording_thread_.joinable())
-    //   recording_thread_.join();
     stopContinuousRecording(); //保证线程正常退出停止录制防止泄露
   }
     //停止录制
@@ -108,7 +103,7 @@ public:
       homedir = getpwuid(getuid())->pw_dir;
     }
     // 这里可以通过 ROS 参数指定录制目录，这里暂时写死为 /tmp/
-    std::string log_dir = std::string(homedir) + "/.ros/log/unity-lans-gz/";;
+    std::string log_dir = std::string(homedir) + "/.ros/log/unity-lans-gz/";
     std::string bag_filename = log_dir + code + "-diagnose." + std::string(username) + "." +
                                std::string(hostname) + "." + time_suffix.str() + ".bag";
             
@@ -142,6 +137,14 @@ public:
           current_bag_.write("imu_plc", item.first, item.second);
         }
     }
+
+    //gnsscoords
+    // {
+    //     std::lock_guard<std::mutex> lock(gnss_mutex_);
+    //     for(const auto &item : gnss_queue_) {
+    //       current_bag_.write("gnss_coords", item.first, item.second);
+    //     }
+    // }
     //将数据写入bag
     continuous_recording_active_ = true;
     ROS_WARN("Continuous recording started.");
@@ -158,7 +161,7 @@ public:
   }
 private:
   ros::NodeHandle nh_;
-  ros::Subscriber odom_sub_, mag_sub_, first_lidar_sub_, imu_sub_, second_lidar_sub_;
+  // ros::Subscriber odom_sub_, mag_sub_, first_lidar_sub_, imu_sub_, second_lidar_sub_, gnss_sub_;
 
   // 使用 deque 存储一段时间内的消息（key 为消息类型）
   std::deque<std::pair<ros::Time, nav_msgs::Odometry>> odom_queue_;
@@ -166,9 +169,10 @@ private:
   std::deque<std::pair<ros::Time, sensor_msgs::PointCloud2>> first_lidar_queue_;
   std::deque<std::pair<ros::Time, sensor_msgs::PointCloud2>> second_lidar_queue_;
   std::deque<std::pair<ros::Time, sensor_msgs::Imu>> imu_queue_;
+  // std::deque<std::pair<ros::Time, private_msgs::GnssCoords>> gnss_queue_;
 
   // 各队列的保护互斥量
-  std::mutex odom_mutex_, mag_mutex_, lidar_mutex_, imu_mutex_;
+  std::mutex odom_mutex_, mag_mutex_, lidar_mutex_, imu_mutex_, gnss_mutex_;
   std::mutex continuous_mutex_;
   bool continuous_recording_active_ =false;
   rosbag::Bag current_bag_;
@@ -192,9 +196,9 @@ private:
       queue.pop_front();
     }
   }
-
+public:
   // 回调函数：订阅 fastlio/odom 将数据推入队列，同时在连续录制时连续写入数据bag
-  void odomCallback(const nav_msgs::Odometry::ConstPtr &msg) {
+  void cacheodom(const nav_msgs::Odometry::ConstPtr &msg) {
     pushMessage(odom_queue_, odom_mutex_, msg->header.stamp, *msg);
     std::lock_guard<std::mutex> lock(continuous_mutex_);
     if(continuous_recording_active_) {
@@ -202,7 +206,7 @@ private:
     }
   }
   // 回调函数：订阅 mag_nail（真值）将数据推入队列，同时在连续录制时连续写入数据bag
-  void magCallback(const nav_msgs::Odometry::ConstPtr &msg) {
+  void cachemag(const nav_msgs::Odometry::ConstPtr &msg) {
     pushMessage(mag_queue_, mag_mutex_, msg->header.stamp, *msg);
     std::lock_guard<std::mutex> lock(continuous_mutex_);
     if(continuous_recording_active_) {
@@ -215,15 +219,15 @@ private:
    * 
    * @param msg 
    */
-//   void firstlidarCallback(const sensor_msgs::PointCloud2::ConstPtr &msg) {
+//   void cachefirstlidarCallback(const sensor_msgs::PointCloud2::ConstPtr &msg) {
 //     pushMessage(lidar_queue_, lidar_mutex_, msg->header.stamp, *msg);
 //   }
 //   回调函数：订阅 sec lidar 数据
-//   void secondlidarCallback(const sensor_msgs::PointCloud2::ConstPtr &msg) {
+//   void cachesecondlidarCallback(const sensor_msgs::PointCloud2::ConstPtr &msg) {
 //     pushMessage(lidar_queue_, lidar_mutex_, msg->header.stamp, *msg);
 //   }
   // 回调函数：订阅 IMU 数据 将数据推入队列，同时在连续录制时连续写入数据bag
-  void imuCallback(const sensor_msgs::Imu::ConstPtr &msg) {
+  void cacheimu(const sensor_msgs::Imu::ConstPtr &msg) {
     pushMessage(imu_queue_, imu_mutex_, msg->header.stamp, *msg);
     std::lock_guard<std::mutex> lock(continuous_mutex_);
     if(continuous_recording_active_) {
@@ -231,73 +235,15 @@ private:
     }
   }
 
-  // 后台线程：等待触发信号后，将各个队列写入 rosbag 文件
-//   void recordingLoop() {
-//     while (ros::ok() && !exit_flag_) {
-//       std::unique_lock<std::mutex> lock(cv_mutex_);
-//       cv_.wait(lock, [this]() { return trigger_ || exit_flag_; });
-//       if (exit_flag_) break;
-//       // 复制当前各队列内容到局部变量（以减少阻塞）
-//       decltype(odom_queue_) odom_copy;
-//       decltype(mag_queue_) mag_copy;
-//     //   decltype(lidar_queue_) lidar_copy;
-//       decltype(imu_queue_) imu_copy;
-//       {
-//         std::lock_guard<std::mutex> lock1(odom_mutex_);
-//         odom_copy = odom_queue_;
-//       }
-//       {
-//         std::lock_guard<std::mutex> lock2(mag_mutex_);
-//         mag_copy = mag_queue_;
-//       }
-//     //   {
-//     //     std::lock_guard<std::mutex> lock3(lidar_mutex_);
-//     //     lidar_copy = lidar_queue_;
-//     //   }
-//       {
-//         std::lock_guard<std::mutex> lock4(imu_mutex_);
-//         imu_copy = imu_queue_;
-//       }
-//       trigger_ = false;  // 重置触发状态
-//       lock.unlock();
+  // 回调函数：订阅 gnss_coords 将数据推入队列，同时在连续录制时连续写入数据bag
+  // void cachegnsscoords(const private_msgs::GnssCoords::ConstPtr &msg) {
+  //   pushMessage(gnss_queue_, gnss_mutex_, msg->header.stamp, *msg);
+  //   std::lock_guard<std::mutex> lock(continuous_mutex_);
+  //   if(continuous_recording_active_) {
+  //     current_bag_.write("gnss_coords", msg->header.stamp, *msg);
+  //   }
+  // }
 
-//       // 生成文件名：diagnose.<username>.<hostname>.<YYYYMMDD-HHMMSS>.bag
-//       std::time_t t = std::time(nullptr);
-//       std::tm *now_tm = std::localtime(&t);
-//       std::ostringstream time_suffix;
-//       time_suffix << std::put_time(now_tm, "%Y%m%d-%H%M%S");
-//       const char *username = getpwuid(getuid())->pw_name;
-//       char hostname[20];
-//       gethostname(hostname, sizeof(hostname));
-//       const char* homedir;
-//       if ((homedir = getenv("HOME")) == NULL) {
-//         homedir = getpwuid(getuid())->pw_dir;
-//     }
-//       // 这里可以通过 ROS 参数指定录制目录，这里暂时写死为 /tmp/
-//       std::string log_dir = std::string(homedir) + "/.ros/log/unity-lans-gz/";;
-//       std::string bag_filename = log_dir + "diagnose." + std::string(username) + "." +
-//                                  std::string(hostname) + "." + time_suffix.str() + ".bag";
-
-//       try {
-//         rosbag::Bag bag;
-//         bag.open(bag_filename, rosbag::bagmode::Write);
-//         // 将各队列写入 rosbag
-//         for (const auto &item : odom_copy)
-//           bag.write("fastlio/odom", item.first, item.second);
-//         for (const auto &item : mag_copy)
-//           bag.write("mag_nail", item.first, item.second);
-//         // for (const auto &item : lidar_copy)
-//         //   bag.write("veloydne_first/points_raw", item.first, item.second);
-//         for (const auto &item : imu_copy)
-//           bag.write("imu_plc", item.first, item.second);
-//         bag.close();
-//         ROS_WARN("Recorded bag file: %s", bag_filename.c_str());
-//       } catch (rosbag::BagException &e) {
-//         ROS_ERROR("Error writing bag file: %s", e.what());
-//       }
-//     }
-//     ROS_INFO("DataRecorder recording thread exiting.");
-//   }
 };
 
 // **********************************************************
@@ -348,10 +294,11 @@ private:
   nav_msgs::Odometry latest_mag_;
   bool received_odom_ = false;
   bool received_mag_ = false;
+  std::mutex last_received_mutex_;
 
   // 保存各传感器最后接收时间
   std::map<std::string, ros::Time> last_received_;
-
+  std::map<std::string, ros::Time> last_frame_time_;
   // 设定的横向和纵向误差阈值（单位：米），可根据需要调整或通过参数配置
   const double THRESHOLD_LONGITUDINAL_ = 0.8;
   const double THRESHOLD_LATERAL_ = 0.1;
@@ -375,16 +322,18 @@ private:
   }
   // fastlio/odom 回调
   void odomCallback(const nav_msgs::Odometry::ConstPtr &msg) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    // std::lock_guard<std::mutex> lock(mutex_);
     latest_odom_ = *msg;
     received_odom_ = true;
+    data_recorder_->cacheodom(msg);
     if (received_mag_) computeLocalizationError();
   }
   // mag_nail 回调
   void magCallback(const nav_msgs::Odometry::ConstPtr &msg) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    // std::lock_guard<std::mutex> lock(mutex_);
     latest_mag_ = *msg;
     received_mag_ = true;
+    data_recorder_->cachemag(msg);
     if (received_odom_) computeLocalizationError();
   }
   // 计算定位误差（横向和纵向误差）
@@ -424,6 +373,7 @@ private:
       //updateFaultTime();
     }
     // 这里还可以进一步检查 msg.data 中是否存在 NaN
+    last_frame_time_["veloydne_first/points_raw"] = msg->header.stamp;
     
   }
 
@@ -435,30 +385,42 @@ private:
       //updateFaultTime();
     }
     // 这里还可以进一步检查 msg.data 中是否存在 NaN
+    last_frame_time_["veloydne_second/points_raw"] = msg->header.stamp;
     
   }
   // IMU 回调：更新接收时间，并检查加速度或角速度是否为 NaN
   void imuCallback(const sensor_msgs::Imu::ConstPtr &msg) {
+    std::lock_guard<std::mutex> lock(last_received_mutex_);
+    data_recorder_->cacheimu(msg);
     last_received_["imu_plc"] = msg->header.stamp;
     if (std::isnan(msg->linear_acceleration.x) ||
-        std::isnan(msg->angular_velocity.x)) {
+        std::isnan(msg->linear_acceleration.y) ||
+        std::isnan(msg->linear_acceleration.z) ||
+        std::isnan(msg->angular_velocity.z)) {
       fault_manager_->reportFault("E004", "Invalid IMU data: NaN values detected");
     //   data_recorder_->triggerRecording();
       updateFaultTime("E004");
     }
+    last_frame_time_["imu_plc"] = msg->header.stamp;
   }
   // 定时器回调：检查各传感器是否超过 500ms 未更新
   void sensorTimeoutCheck(const ros::TimerEvent &) {
-    ros::Time now = ros::Time::now();
+    std::lock_guard<std::mutex> lock(last_received_mutex_);
     for (const auto &item : last_received_) {
-      if ((now - item.second).toSec() > 0.5) {
-        std::ostringstream oss;
-        oss << "Sensor timeout: no data from " << item.first << " for "
-            << (now - item.second).toSec() << " seconds";
-        fault_manager_->reportFault("E005", oss.str());
-        // data_recorder_->triggerRecording();
-        updateFaultTime("E005");
-      }
+        // 通过帧间时间差判断是否超时
+        if (last_frame_time_.find(item.first) != last_frame_time_.end()) {
+            double delta_time = (item.second - last_frame_time_[item.first]).toSec();
+            if (delta_time > 0.5) {
+                std::ostringstream oss;
+                oss << item.first<< " Sensor timeout: " << item.first 
+                    << " frame interval = " << std::fixed << std::setprecision(3)
+                    << delta_time << " seconds";
+                fault_manager_->reportFault("E005", oss.str());
+                updateFaultTime("E005");
+            }
+        }
+        // 更新上一帧时间戳
+        last_frame_time_[item.first] = item.second;
     }
   }
 };
@@ -476,7 +438,7 @@ int main(int argc, char **argv) {
         }
 
         google::ParseCommandLineFlags(&argc, &argv, true);
-  // 实例化三个模块，注意各模块间通过指针相互调用
+  // 实例化三个模块
   FaultManager fault_manager(nh);
   DataRecorder data_recorder(nh);
   MonitoringModule monitor(nh, &fault_manager, &data_recorder);
