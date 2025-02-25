@@ -5,6 +5,7 @@
 #include <ros/ros.h>
 #include <nav_msgs/Odometry.h>
 #include <sensor_msgs/PointCloud2.h>
+#include <private_msgs/GnssCoords.h>
 #include <sensor_msgs/Imu.h>
 #include <rosbag/bag.h>
 #include <std_msgs/String.h>
@@ -139,12 +140,20 @@ public:
     }
 
     //gnsscoords
-    // {
-    //     std::lock_guard<std::mutex> lock(gnss_mutex_);
-    //     for(const auto &item : gnss_queue_) {
-    //       current_bag_.write("gnss_coords", item.first, item.second);
-    //     }
-    // }
+    {
+        std::lock_guard<std::mutex> lock(gnss_mutex_);
+        for(const auto &item : gnss_queue_) {
+          current_bag_.write("gnss_coords", item.first, item.second);
+        }
+    }
+
+    //pillar_localization
+    {
+        std::lock_guard<std::mutex> lock(lidar_odom_mutex_);
+        for(const auto &item : first_lidar_queue_) {
+          current_bag_.write("pillar_localization", item.first, item.second);
+        }
+    }
     //将数据写入bag
     continuous_recording_active_ = true;
     ROS_WARN("Continuous recording started.");
@@ -169,10 +178,11 @@ private:
   std::deque<std::pair<ros::Time, sensor_msgs::PointCloud2>> first_lidar_queue_;
   std::deque<std::pair<ros::Time, sensor_msgs::PointCloud2>> second_lidar_queue_;
   std::deque<std::pair<ros::Time, sensor_msgs::Imu>> imu_queue_;
-  // std::deque<std::pair<ros::Time, private_msgs::GnssCoords>> gnss_queue_;
+  std::deque<std::pair<ros::Time, private_msgs::GnssCoords>> gnss_queue_;
+  std::deque<std::pair<ros::Time, nav_msgs::Odometry>> lidar_odom_queue_;
 
   // 各队列的保护互斥量
-  std::mutex odom_mutex_, mag_mutex_, lidar_mutex_, imu_mutex_, gnss_mutex_;
+  std::mutex odom_mutex_, mag_mutex_, lidar_mutex_, imu_mutex_, gnss_mutex_, lidar_odom_mutex_;
   std::mutex continuous_mutex_;
   bool continuous_recording_active_ =false;
   rosbag::Bag current_bag_;
@@ -236,13 +246,21 @@ public:
   }
 
   // 回调函数：订阅 gnss_coords 将数据推入队列，同时在连续录制时连续写入数据bag
-  // void cachegnsscoords(const private_msgs::GnssCoords::ConstPtr &msg) {
-  //   pushMessage(gnss_queue_, gnss_mutex_, msg->header.stamp, *msg);
-  //   std::lock_guard<std::mutex> lock(continuous_mutex_);
-  //   if(continuous_recording_active_) {
-  //     current_bag_.write("gnss_coords", msg->header.stamp, *msg);
-  //   }
-  // }
+  void cachegnsscoords(const private_msgs::GnssCoords::ConstPtr &msg) {
+    pushMessage(gnss_queue_, gnss_mutex_, msg->header.stamp, *msg);
+    std::lock_guard<std::mutex> lock(continuous_mutex_);
+    if(continuous_recording_active_) {
+      current_bag_.write("gnss_coords", msg->header.stamp, *msg);
+    }
+  }
+
+    void cachelidarodom(const nav_msgs::Odometry::ConstPtr &msg) {
+    pushMessage(lidar_odom_queue_, odom_mutex_, msg->header.stamp, *msg);
+    std::lock_guard<std::mutex> lock(continuous_mutex_);
+    if(continuous_recording_active_) {
+      current_bag_.write("pillar_localization/odometry", msg->header.stamp, *msg);
+    }
+  }
 
 };
 
@@ -256,13 +274,24 @@ public:
                    FaultManager *fault_manager,
                    DataRecorder *data_recorder)
       : nh_(nh), fault_manager_(fault_manager), data_recorder_(data_recorder) {
-    // 定位相关订阅
-    odom_sub_ = nh_.subscribe("fastlio/odometry", 100, &MonitoringModule::odomCallback, this);
-    mag_sub_ = nh_.subscribe("mag_nail", 100, &MonitoringModule::magCallback, this);
-    // 传感器订阅（用于数据有效性检查）
-    first_lidar_sub_ = nh_.subscribe("veloydne_first/points_raw", 100, &MonitoringModule::firstlidarCallback, this);
-    second_lidar_sub_ = nh_.subscribe("veloydne_second/points_raw", 100, &MonitoringModule::secondlidarCallback, this);
-    imu_sub_ = nh_.subscribe("imu_plc", 100, &MonitoringModule::imuCallback, this);
+    // 读取参数
+    ros::NodeHandle nh_private("~");
+    nh_private.param<std::string>("topic_fastlio_odom", topic_fastlio_odom_, "/fastlio/odometry");
+    nh_private.param<std::string>("topic_mag_nail", topic_mag_nail_, "/mag_nail");
+    nh_private.param<std::string>("topic_imu", topic_imu_, "/imu_plc");
+    nh_private.param<std::string>("topic_pillar_odom", topic_pillar_odom_, "/pillar_localization/odometry");
+    nh_private.param<std::string>("topic_gnss_coords", topic_gnss_coords_, "/gnss_coords");
+
+    nh_private.param<double>("threshold_longitudinal", THRESHOLD_LONGITUDINAL_, 10);
+    nh_private.param<double>("threshold_lateral", THRESHOLD_LATERAL_, 0.1);
+    nh_private.param<double>("sensor_delay_offset", sensor_delay_offset_, 0.5);
+
+    // 统一订阅
+    odom_sub_ = nh_.subscribe(topic_fastlio_odom_, 100, &MonitoringModule::odomCallback, this);
+    mag_sub_ = nh_.subscribe(topic_mag_nail_, 100, &MonitoringModule::magCallback, this);
+    imu_sub_ = nh_.subscribe(topic_imu_, 100, &MonitoringModule::imuCallback, this);
+    pillar_odom_sub_ = nh_.subscribe(topic_pillar_odom_, 100, &MonitoringModule::pillarOdomCallback, this);
+    gnss_coords_sub_ = nh_.subscribe(topic_gnss_coords_, 100, &MonitoringModule::gnssCoordsCallback, this);
     // 定时器：检查各传感器是否超时（500ms 未更新）
     sensor_timeout_timer_ = nh_.createTimer(ros::Duration(0.2),
                                               &MonitoringModule::sensorTimeoutCheck, this);
@@ -284,7 +313,7 @@ private:
   DataRecorder *data_recorder_;
 
   ros::Subscriber odom_sub_, mag_sub_;
-  ros::Subscriber first_lidar_sub_, imu_sub_, second_lidar_sub_;
+  ros::Subscriber first_lidar_sub_, imu_sub_, second_lidar_sub_,pillar_odom_sub_, gnss_coords_sub_;
   ros::Timer sensor_timeout_timer_;
   ros::Timer fault_clear_timer_;
   // 用于定位误差计算：保存最新接收到的 fastlio/odom 和 mag_nail
@@ -300,9 +329,17 @@ private:
   std::map<std::string, ros::Time> last_received_;
   std::map<std::string, ros::Time> last_frame_time_;
   // 设定的横向和纵向误差阈值（单位：米），可根据需要调整或通过参数配置
-  const double THRESHOLD_LONGITUDINAL_ = 0.8;
-  const double THRESHOLD_LATERAL_ = 0.1;
+  // 话题名称
+  std::string topic_fastlio_odom_;
+  std::string topic_mag_nail_;
+  std::string topic_imu_;
+  std::string topic_pillar_odom_;
+  std::string topic_gnss_coords_;
 
+  // 误差阈值和延迟修正
+  double THRESHOLD_LONGITUDINAL_;
+  double THRESHOLD_LATERAL_;
+  double sensor_delay_offset_;
   std::mutex fault_mutex_;
 
   // 每次检测到故障时更新 last_fault_time_ 并启动录制
@@ -319,6 +356,21 @@ private:
     if ((ros::Time::now() - last_fault_time_).toSec() > 5.0) {
       data_recorder_->stopContinuousRecording();
     }
+  }
+
+  //pillar 回调
+  void pillarOdomCallback(const nav_msgs::Odometry::ConstPtr &msg) {
+    // std::lock_guard<std::mutex> lock(mutex_);
+    // latest_odom_ = *msg;
+    // received_odom_ = true;
+    data_recorder_->cachelidarodom(msg);
+    // if (received_mag_) computeLocalizationError();
+  }
+
+  //gnss 回调
+  void gnssCoordsCallback(const private_msgs::GnssCoords::ConstPtr &msg) {
+    // std::lock_guard<std::mutex> lock(mutex_);
+    data_recorder_->cachegnsscoords(msg);
   }
   // fastlio/odom 回调
   void odomCallback(const nav_msgs::Odometry::ConstPtr &msg) {
@@ -410,7 +462,7 @@ private:
         // 通过帧间时间差判断是否超时
         if (last_frame_time_.find(item.first) != last_frame_time_.end()) {
             double delta_time = (item.second - last_frame_time_[item.first]).toSec();
-            if (delta_time > 0.5) {
+            if (delta_time > sensor_delay_offset_) {
                 std::ostringstream oss;
                 oss << item.first<< " Sensor timeout: " << item.first 
                     << " frame interval = " << std::fixed << std::setprecision(3)

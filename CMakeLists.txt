@@ -15,6 +15,7 @@ find_package(catkin REQUIRED COMPONENTS
   sensor_msgs
   std_msgs
   rosbag
+  private_msgs
 )
 find_package(gflags REQUIRED)
 find_package(glog REQUIRED)
@@ -55,4 +56,9 @@ install(TARGETS ${PROJECT_NAME}
 #   FILES_MATCHING PATTERN "*.h"
 #   PATTERN ".svn" EXCLUDE
 # )
+
+install (FILES 
+    launch/run.launch
+    DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/launch
+)
 

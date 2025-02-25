@@ -1,8 +1,0 @@
-prefix=/home/chatgpt/monitor_ws/src/monitor_log/build/devel
-
-Name: monitor_log
-Description: Description of monitor_log
-Version: 0.0.0
-Cflags: -I/home/chatgpt/monitor_ws/src/monitor_log/include
-Libs: -L${prefix}/lib 
-Requires: 

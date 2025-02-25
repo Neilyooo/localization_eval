@@ -1,6 +1,20 @@
 <launch>
   <node pkg="monitor_log" type="monitor_log" name="monitor_log" output="screen"/>
-  <node pkg="rosbag" type="record" name="record" output="screen" args="-j --split --size=30 -o $(env HOME)/.ros/log/ 
+      <!-- 参数配置 -->
+      <!-- 话题名称配置 -->
+      <param name="topic_fastlio_odom" value="/fastlio/odometry" />
+      <param name="topic_mag_nail" value="/mag_nail" />
+      <param name="topic_imu" value="/imu_plc" />
+      <param name="topic_pillar_odom" value="/pillar_localization/odometry" />
+      <param name="topic_gnss_coords" value="/gnss_coords" />
+        
+        <!-- 定位误差阈值 -->
+      <param name="threshold_longitudinal" value="10" />
+      <param name="threshold_lateral" value="0.1" />
+
+        <!-- 传感器延迟修正（offset） -->
+      <param name="sensor_delay_offset" value="0.5" />
+  <node pkg="rosbag" type="record" name="slam_record" output="screen" args="-j --split --size=30 -o $(env HOME)/.ros/log/ 
   /odom /final_position /map_node/odometry /mag_nail /hg_gnss_coords /gnss_coords /fastlio/odometry /pillar_localization/odometry
   /imu_plc" />
 </launch>

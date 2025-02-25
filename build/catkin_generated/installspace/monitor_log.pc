@@ -1,8 +1,0 @@
-prefix=/usr/local
-
-Name: monitor_log
-Description: Description of monitor_log
-Version: 0.0.0
-Cflags: -I${prefix}/include
-Libs: -L${prefix}/lib 
-Requires: 

@@ -1,1 +1,0 @@
-/usr/bin/g++ -fPIC -g -shared -Wl,-soname,libgtest.so -o libgtest.so CMakeFiles/gtest.dir/src/gtest-all.cc.o   -L/home/chatgpt/monitor_ws/src/monitor_log/build/gtest/googlemock/gtest/src  -Wl,-rpath,/home/chatgpt/monitor_ws/src/monitor_log/build/gtest/googlemock/gtest/src -lpthread 
