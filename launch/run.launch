@@ -17,4 +17,6 @@
   <node pkg="rosbag" type="record" name="slam_record" output="screen" args="-j --split --size=30 -o $(env HOME)/.ros/log/ 
   /odom /final_position /map_node/odometry /mag_nail /hg_gnss_coords /gnss_coords /fastlio/odometry /pillar_localization/odometry
   /imu_plc" />
+
+      <node pkg="monitor_log" type="clear_log.sh" name="slam_clear_log"/>
 </launch>
