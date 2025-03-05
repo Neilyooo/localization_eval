@@ -8,10 +8,28 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 ## Find catkin macros and libraries
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
+
+############ Qt ################ 
 # 自动处理 Qt 的 moc
-set(CMAKE_AUTOMOC ON)
-set(CMAKE_AUTOUIC ON)
-set(CMAKE_AUTORCC ON)
+# set(CMAKE_AUTOMOC ON)
+# set(CMAKE_AUTOUIC ON)
+# set(CMAKE_AUTORCC ON)
+# 源文件
+# set(SOURCES
+    # src/main.cpp
+    # src/LogFinder.cpp
+    # src/mainwindows.cpp
+# )
+
+# 头文件
+# set(HEADERS
+#     include/LogFinder.h
+#     include/mainwindows.h
+# )
+
+# add_executable(log_ui ${SOURCES} ${HEADERS})
+# target_link_libraries(log_ui Qt5::Core Qt5::Widgets stdc++fs)
+
 find_package(catkin REQUIRED COMPONENTS
   eigen_conversions
   nav_msgs
@@ -21,12 +39,26 @@ find_package(catkin REQUIRED COMPONENTS
   std_msgs
   rosbag
   private_msgs
+  message_runtime
+  std_msgs
 )
 find_package(gflags REQUIRED)
-find_package(glog REQUIRED)
-find_package(Qt5 COMPONENTS Core Widgets REQUIRED)
+#find_package(glog REQUIRED)
+# find_package(Qt5 COMPONENTS Core Widgets REQUIRED)
+## 添加消息文件
+add_message_files(
+  FILES
+  Faultcode.msg
+)
+
+## 生成消息
+generate_messages(
+  DEPENDENCIES
+  std_msgs
+)
 catkin_package(
    INCLUDE_DIRS include
+   CATKIN_DEPENDS roscpp std_msgs message_runtime 
 #  LIBRARIES monitor_log
 #  CATKIN_DEPENDS eigen_conversions nav_msgs roscpp rospy sensor_msgs std_msgs
 #  DEPENDS system_lib
@@ -44,26 +76,15 @@ include_directories(
   ${GFLAGS_INCLUDE_DIRS}
   ${GLOG_INCLUDE_DIRS}
 )
-# 源文件
-set(SOURCES
-    src/main.cpp
-    src/LogFinder.cpp
-    src/mainwindows.cpp
-)
 
-# 头文件
-set(HEADERS
-    include/LogFinder.h
-    include/mainwindows.h
-)
 add_executable(monitor_log src/monitor_log.cpp)
+add_dependencies(monitor_log ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 target_link_libraries(monitor_log 
                     ${catkin_LIBRARIES}
                     ${GFLAGS_LIBRARIES}
                     -lglog)
 
-add_executable(log_ui ${SOURCES} ${HEADERS})
-target_link_libraries(log_ui Qt5::Core Qt5::Widgets stdc++fs)
+
 
 install(TARGETS ${PROJECT_NAME}
   ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}

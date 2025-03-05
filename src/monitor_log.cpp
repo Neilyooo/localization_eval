@@ -26,30 +26,44 @@
 #include <functional>
 #include <future>
 #include "util.hpp"
+#include <std_msgs/Header.h>
+#include <std_msgs/String.h>
+#include "monitor_log/Faultcode.h"
 // **********************************************************
 // FaultManager：负责记录和发布故障码（例如 E001,E002...）
 // **********************************************************
 class FaultManager {
 public:
   FaultManager(ros::NodeHandle &nh) {
-    fault_pub_ = nh.advertise<std_msgs::String>("fault_codes", 10);
+    fault_pub_ = nh.advertise<monitor_log::Faultcode>("fault_codes", 10);
+    fault_active_ = false;
   }
-  // 当检测到故障时调用（例如定位误差过大、传感器数据无效或超时）
+  
+  // 当检测到故障时调用（例如定位误差过大、传感器数据无效或延迟异常）
+  // 发布消息格式为 monitor_log/Faultcode，其中 header 包含当前时间，data 字段只填故障代码（例如 "E001"）。
+  // “记录一次后清空”逻辑：若 fault_active_ 为 true，则不重复发布；当故障解除时调用 clearFault() 重置状态。
   void reportFault(const std::string &code, const std::string &description) {
     std::lock_guard<std::mutex> lock(fault_mutex_);
-    std_msgs::String msg;
-    std::ostringstream oss;
-    oss << "[" << code << "] " << description 
-        << " at " << ros::Time::now().toSec();
-    msg.data = oss.str();
-    LOG(INFO)<<"["<<code << "] "<< description ;
-    // fault_pub_.publish(msg);
-    // ROS_WARN("%s", msg.data.c_str());
-    // 这里“记录一次后清空”的逻辑由上层模块调用前确保状态重置
+    if (!fault_active_) {
+      monitor_log::Faultcode msg;
+      msg.header.stamp = ros::Time::now();
+      msg.data.data = code;  // 注意：msg.data 是 std_msgs/String 类型，所以需要设置 data 字段
+      fault_pub_.publish(msg);
+      LOG(INFO) << "[" << code << "] " << description;
+      fault_active_ = true;
+    }
   }
+  
+  // 清除故障状态（例如由监控模块检测到故障解除时调用），允许后续故障重新发布
+  void clearFault() {
+    std::lock_guard<std::mutex> lock(fault_mutex_);
+    fault_active_ = false;
+  }
+  
 private:
   ros::Publisher fault_pub_;
   std::mutex fault_mutex_;
+  bool fault_active_;
 };
 
 // **********************************************************
@@ -210,18 +224,18 @@ public:
   // 回调函数：订阅 fastlio/odom 将数据推入队列，同时在连续录制时连续写入数据bag
   void cacheodom(const nav_msgs::Odometry::ConstPtr &msg) {
     pushMessage(odom_queue_, odom_mutex_, msg->header.stamp, *msg);
-    std::lock_guard<std::mutex> lock(continuous_mutex_);
-    if(continuous_recording_active_) {
-      current_bag_.write("fastlio/odometry", msg->header.stamp, *msg);
-    }
+    // std::lock_guard<std::mutex> lock(continuous_mutex_);
+    // if(continuous_recording_active_) {
+    //   current_bag_.write("fastlio/odometry", msg->header.stamp, *msg);
+    // }
   }
   // 回调函数：订阅 mag_nail（真值）将数据推入队列，同时在连续录制时连续写入数据bag
   void cachemag(const nav_msgs::Odometry::ConstPtr &msg) {
     pushMessage(mag_queue_, mag_mutex_, msg->header.stamp, *msg);
-    std::lock_guard<std::mutex> lock(continuous_mutex_);
-    if(continuous_recording_active_) {
-      current_bag_.write("mag_nail", msg->header.stamp, *msg);
-    }
+    // std::lock_guard<std::mutex> lock(continuous_mutex_);
+    // if(continuous_recording_active_) {
+    //   current_bag_.write("mag_nail", msg->header.stamp, *msg);
+    // }
   }
   // 回调函数：订阅 first lidar 数据
   /**
@@ -239,27 +253,27 @@ public:
   // 回调函数：订阅 IMU 数据 将数据推入队列，同时在连续录制时连续写入数据bag
   void cacheimu(const sensor_msgs::Imu::ConstPtr &msg) {
     pushMessage(imu_queue_, imu_mutex_, msg->header.stamp, *msg);
-    std::lock_guard<std::mutex> lock(continuous_mutex_);
-    if(continuous_recording_active_) {
-      current_bag_.write("imu_plc", msg->header.stamp, *msg);
-    }
+    // std::lock_guard<std::mutex> lock(continuous_mutex_);
+    // if(continuous_recording_active_) {
+    //   current_bag_.write("imu_plc", msg->header.stamp, *msg);
+    // }
   }
 
   // 回调函数：订阅 gnss_coords 将数据推入队列，同时在连续录制时连续写入数据bag
   void cachegnsscoords(const private_msgs::GnssCoords::ConstPtr &msg) {
     pushMessage(gnss_queue_, gnss_mutex_, msg->header.stamp, *msg);
-    std::lock_guard<std::mutex> lock(continuous_mutex_);
-    if(continuous_recording_active_) {
-      current_bag_.write("gnss_coords", msg->header.stamp, *msg);
-    }
+    // std::lock_guard<std::mutex> lock(continuous_mutex_);
+    // if(continuous_recording_active_) {
+    //   current_bag_.write("gnss_coords", msg->header.stamp, *msg);
+    // }
   }
 
     void cachelidarodom(const nav_msgs::Odometry::ConstPtr &msg) {
     pushMessage(lidar_odom_queue_, odom_mutex_, msg->header.stamp, *msg);
-    std::lock_guard<std::mutex> lock(continuous_mutex_);
-    if(continuous_recording_active_) {
-      current_bag_.write("pillar_localization/odometry", msg->header.stamp, *msg);
-    }
+    // std::lock_guard<std::mutex> lock(continuous_mutex_);
+    // if(continuous_recording_active_) {
+    //   current_bag_.write("pillar_localization/odometry", msg->header.stamp, *msg);
+    // }
   }
 
 };
@@ -346,7 +360,7 @@ private:
   void updateFaultTime(const std::string &code){
     std::lock_guard<std::mutex> lock(fault_mutex_);
     last_fault_time_ = ros::Time::now();
-    data_recorder_->startContinuousRecording(code);
+    // data_recorder_->startContinuousRecording(code);
 
   }
 
@@ -354,7 +368,8 @@ private:
   void faultClearCheck(const ros::TimerEvent &) {
     std::lock_guard<std::mutex> lock(fault_mutex_);
     if ((ros::Time::now() - last_fault_time_).toSec() > 5.0) {
-      data_recorder_->stopContinuousRecording();
+      // data_recorder_->stopContinuousRecording();
+      fault_manager_->clearFault();
     }
   }
 
@@ -406,14 +421,14 @@ private:
     // std::cerr<<"lateral_error: "<<lateral_error<<std::endl;
     // ROS_INFO("timestamp: %f, longitudinal_error: %f, lateral_error: %f", latest_odom_.header.stamp.toSec(),longitudinal_error, lateral_error);
     // 如果任一误差超过阈值，则触发故障和录制
-    if (std::abs(longitudinal_error) > THRESHOLD_LONGITUDINAL_ ||
+    if (std::abs(longitudinal_error) > THRESHOLD_LONGITUDINAL_ || 
         std::abs(lateral_error) > THRESHOLD_LATERAL_) {
       std::ostringstream oss;
       oss << "Localization error exceeded: longitudinal = " << longitudinal_error
           << ", lateral = " << lateral_error;
       fault_manager_->reportFault("E001", oss.str());
     //   data_recorder_->triggerRecording();
-      updateFaultTime("E001");
+      // updateFaultTime("E001");
     }
   }
   // lidar 回调：更新接收时间，并检查是否为空数据（此处简单判断 width==0）
